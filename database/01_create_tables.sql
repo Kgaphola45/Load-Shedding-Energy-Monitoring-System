@@ -432,3 +432,36 @@ CREATE TABLE AuditLog (
     
     FOREIGN KEY (ChangedBy) REFERENCES Users(UserID)
 );
+
+-- Create indexes for better performance
+CREATE INDEX IX_Users_RegionID ON Users(RegionID);
+CREATE INDEX IX_Users_Email ON Users(Email);
+CREATE INDEX IX_Users_UserType ON Users(UserType);
+CREATE INDEX IX_PowerUsage_UserID_Timestamp ON PowerUsage(UserID, Timestamp);
+CREATE INDEX IX_PowerUsage_Timestamp ON PowerUsage(Timestamp);
+CREATE INDEX IX_Schedules_RegionID_Stage ON Schedules(RegionID, Stage);
+CREATE INDEX IX_Schedules_DayOfWeek_StartTime ON Schedules(DayOfWeek, StartTime);
+CREATE INDEX IX_Outages_RegionID_Status ON Outages(RegionID, Status);
+CREATE INDEX IX_Outages_StartTime ON Outages(StartTime);
+CREATE INDEX IX_Alerts_UserID_SentDate ON Alerts(UserID, SentDate);
+CREATE INDEX IX_Alerts_IsRead ON Alerts(IsRead);
+CREATE INDEX IX_BackupUsage_BackupID_Timestamp ON BackupUsage(BackupID, Timestamp);
+CREATE INDEX IX_Billing_UserID_BillingMonth ON Billing(UserID, BillingMonth);
+CREATE INDEX IX_Billing_PaymentStatus ON Billing(PaymentStatus);
+
+-- Create full-text indexes for search functionality
+IF EXISTS (SELECT * FROM sys.fulltext_catalogs WHERE name = 'LoadSheddingCatalog')
+    DROP FULLTEXT CATALOG LoadSheddingCatalog;
+CREATE FULLTEXT CATALOG LoadSheddingCatalog AS DEFAULT;
+
+CREATE FULLTEXT INDEX ON Users(FirstName, LastName, AddressLine1, City) 
+    KEY INDEX PK_Users ON LoadSheddingCatalog;
+
+CREATE FULLTEXT INDEX ON Outages(Description, Cause) 
+    KEY INDEX PK_Outages ON LoadSheddingCatalog;
+
+CREATE FULLTEXT INDEX ON Alerts(Title, Message) 
+    KEY INDEX PK_Alerts ON LoadSheddingCatalog;
+
+PRINT 'Database schema created successfully!';
+PRINT 'Total tables created: ' + CAST((SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE = 'BASE TABLE') AS NVARCHAR(10));
