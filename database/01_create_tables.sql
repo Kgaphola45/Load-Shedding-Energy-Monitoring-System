@@ -238,3 +238,71 @@ CREATE TABLE BackupUsage (
     CONSTRAINT CHK_PowerGenerated_Positive CHECK (PowerGeneratedKWH >= 0),
     CONSTRAINT CHK_PowerUsed_Positive CHECK (PowerUsedKWH >= 0)
 );
+
+-- 10. Alerts Table - Notifications sent to users
+CREATE TABLE Alerts (
+    AlertID BIGINT IDENTITY(1,1) PRIMARY KEY,
+    UserID INT NOT NULL,
+    AlertType NVARCHAR(30) NOT NULL CHECK (AlertType IN (
+        'LoadSheddingStart', 'LoadSheddingEnd', 
+        'OutageReported', 'OutageResolved', 'OutageUpdate',
+        'HighUsage', 'UsageThreshold', 'MaintenanceReminder',
+        'BackupSystemActive', 'BackupSystemLow', 'SystemAlert',
+        'PaymentDue', 'TariffChange', 'Emergency'
+    )),
+    Title NVARCHAR(200) NOT NULL,
+    Message NVARCHAR(1000) NOT NULL,
+    IsRead BIT DEFAULT 0,
+    IsSent BIT DEFAULT 0,
+    Priority NVARCHAR(10) DEFAULT 'Medium' CHECK (Priority IN ('Low', 'Medium', 'High', 'Critical')),
+    RelatedOutageID INT,
+    RelatedScheduleID INT,
+    RelatedUsageID BIGINT,
+    SentDate DATETIME2 DEFAULT GETDATE(),
+    ReadDate DATETIME2,
+    ExpiryDate DATETIME2,
+    CreatedDate DATETIME2 DEFAULT GETDATE(),
+    
+    FOREIGN KEY (UserID) REFERENCES Users(UserID),
+    FOREIGN KEY (RelatedOutageID) REFERENCES Outages(OutageID),
+    FOREIGN KEY (RelatedScheduleID) REFERENCES Schedules(ScheduleID),
+    FOREIGN KEY (RelatedUsageID) REFERENCES PowerUsage(UsageID)
+);
+
+-- 11. AlertPreferences Table - User preferences for alerts
+CREATE TABLE AlertPreferences (
+    PreferenceID INT IDENTITY(1,1) PRIMARY KEY,
+    UserID INT NOT NULL,
+    AlertType NVARCHAR(30) NOT NULL,
+    Channel NVARCHAR(20) DEFAULT 'Email' CHECK (Channel IN ('Email', 'SMS', 'Push', 'Both')),
+    IsEnabled BIT DEFAULT 1,
+    MinimumPriority NVARCHAR(10) DEFAULT 'Medium',
+    QuietHoursStart TIME DEFAULT '22:00',
+    QuietHoursEnd TIME DEFAULT '07:00',
+    CreatedDate DATETIME2 DEFAULT GETDATE(),
+    ModifiedDate DATETIME2 DEFAULT GETDATE(),
+    
+    FOREIGN KEY (UserID) REFERENCES Users(UserID),
+    UNIQUE (UserID, AlertType),
+    CONSTRAINT CHK_QuietHours CHECK (QuietHoursStart < QuietHoursEnd)
+);
+
+-- 12. MaintenanceLogs Table - Equipment maintenance history
+CREATE TABLE MaintenanceLogs (
+    LogID INT IDENTITY(1,1) PRIMARY KEY,
+    BackupID INT NOT NULL,
+    MaintenanceType NVARCHAR(20) CHECK (MaintenanceType IN ('Routine', 'Repair', 'Inspection', 'Upgrade', 'Replacement')),
+    Description NVARCHAR(500) NOT NULL,
+    PerformedBy NVARCHAR(100) NOT NULL,
+    PerformedDate DATE NOT NULL,
+    NextMaintenanceDate DATE,
+    Cost DECIMAL(10,2),
+    PartsReplaced NVARCHAR(500),
+    WorkHours DECIMAL(4,2),
+    TechnicianNotes NVARCHAR(1000),
+    CreatedDate DATETIME2 DEFAULT GETDATE(),
+    
+    FOREIGN KEY (BackupID) REFERENCES BackupSystems(BackupID),
+    CONSTRAINT CHK_Cost_Positive CHECK (Cost >= 0),
+    CONSTRAINT CHK_WorkHours_Positive CHECK (WorkHours >= 0)
+);
