@@ -72,3 +72,80 @@ CREATE TABLE Users (
     CONSTRAINT CHK_Email_Format CHECK (Email LIKE '%_@__%.__%'),
     CONSTRAINT CHK_PhoneNumber_Format CHECK (PhoneNumber LIKE '+[0-9]%' OR PhoneNumber LIKE '0[0-9]%')
 );
+
+
+-- 3. UserProfiles Table - Extended user information
+CREATE TABLE UserProfiles (
+    ProfileID INT IDENTITY(1,1) PRIMARY KEY,
+    UserID INT UNIQUE NOT NULL,
+    DateOfBirth DATE,
+    IDNumber NVARCHAR(20),
+    Occupation NVARCHAR(100),
+    HouseholdSize INT DEFAULT 1,
+    PropertyType NVARCHAR(20) CHECK (PropertyType IN ('House', 'Apartment', 'Business', 'Factory', 'Complex')),
+    PropertySizeSqM DECIMAL(8,2),
+    AverageMonthlyIncome DECIMAL(12,2),
+    EnergyConsumptionAwareness NVARCHAR(10) CHECK (EnergyConsumptionAwareness IN ('Low', 'Medium', 'High')),
+    HasElectricVehicle BIT DEFAULT 0,
+    HasSolarPanels BIT DEFAULT 0,
+    HasGenerator BIT DEFAULT 0,
+    HasBatteryBackup BIT DEFAULT 0,
+    CreatedDate DATETIME2 DEFAULT GETDATE(),
+    ModifiedDate DATETIME2 DEFAULT GETDATE(),
+    
+    FOREIGN KEY (UserID) REFERENCES Users(UserID),
+    CONSTRAINT CHK_HouseholdSize_Positive CHECK (HouseholdSize > 0),
+    CONSTRAINT CHK_PropertySize_Positive CHECK (PropertySizeSqM > 0)
+);
+
+-- 4. Schedules Table - Load shedding schedules for each region
+CREATE TABLE Schedules (
+    ScheduleID INT IDENTITY(1,1) PRIMARY KEY,
+    RegionID INT NOT NULL,
+    Stage INT NOT NULL CHECK (Stage BETWEEN 1 AND 8),
+    StartTime TIME NOT NULL,
+    EndTime TIME NOT NULL,
+    DayOfWeek INT CHECK (DayOfWeek BETWEEN 1 AND 7), -- 1=Sunday, 7=Saturday
+    ScheduleDate DATE, -- For specific date schedules
+    IsRecurring BIT DEFAULT 1,
+    ScheduleType NVARCHAR(20) DEFAULT 'Normal' CHECK (ScheduleType IN ('Normal', 'Emergency', 'Maintenance')),
+    DurationMinutes AS DATEDIFF(MINUTE, StartTime, EndTime),
+    IsActive BIT DEFAULT 1,
+    CreatedBy INT NOT NULL,
+    CreatedDate DATETIME2 DEFAULT GETDATE(),
+    ModifiedDate DATETIME2 DEFAULT GETDATE(),
+    EffectiveFrom DATE DEFAULT CAST(GETDATE() AS DATE),
+    EffectiveTo DATE,
+    
+    FOREIGN KEY (RegionID) REFERENCES Regions(RegionID),
+    FOREIGN KEY (CreatedBy) REFERENCES Users(UserID),
+    CONSTRAINT CHK_StartTime_Before_EndTime CHECK (StartTime < EndTime),
+    CONSTRAINT CHK_EffectiveDates CHECK (EffectiveFrom <= ISNULL(EffectiveTo, '9999-12-31'))
+);
+
+-- 5. PowerUsage Table - Records of electricity consumption
+CREATE TABLE PowerUsage (
+    UsageID BIGINT IDENTITY(1,1) PRIMARY KEY,
+    UserID INT NOT NULL,
+    MeterReading DECIMAL(12,4) NOT NULL,
+    UsageKWH DECIMAL(10,4) NOT NULL,
+    Timestamp DATETIME2 NOT NULL,
+    Temperature DECIMAL(5,2),
+    Humidity DECIMAL(5,2),
+    IsPeakHours BIT DEFAULT 0,
+    IsLoadShedding BIT DEFAULT 0,
+    CostPerKWH DECIMAL(8,4) DEFAULT 2.50,
+    TotalCost DECIMAL(10,2),
+    ApparentPower DECIMAL(8,2), -- kVA
+    PowerFactor DECIMAL(3,2) DEFAULT 0.95,
+    Voltage DECIMAL(6,2) DEFAULT 230.0,
+    CurrentReading DECIMAL(8,2),
+    DataSource NVARCHAR(20) DEFAULT 'SmartMeter' CHECK (DataSource IN ('SmartMeter', 'Manual', 'Estimate', 'API')),
+    CreatedDate DATETIME2 DEFAULT GETDATE(),
+    
+    FOREIGN KEY (UserID) REFERENCES Users(UserID),
+    CONSTRAINT CHK_UsageKWH_Positive CHECK (UsageKWH >= 0),
+    CONSTRAINT CHK_MeterReading_Positive CHECK (MeterReading >= 0),
+    CONSTRAINT CHK_PowerFactor_Range CHECK (PowerFactor BETWEEN 0.5 AND 1.0)
+);
+
