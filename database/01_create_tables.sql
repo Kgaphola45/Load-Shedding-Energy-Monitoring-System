@@ -149,3 +149,92 @@ CREATE TABLE PowerUsage (
     CONSTRAINT CHK_PowerFactor_Range CHECK (PowerFactor BETWEEN 0.5 AND 1.0)
 );
 
+-- 6. Outages Table - Logs of power interruptions
+CREATE TABLE Outages (
+    OutageID INT IDENTITY(1,1) PRIMARY KEY,
+    RegionID INT NOT NULL,
+    OutageType NVARCHAR(20) NOT NULL CHECK (OutageType IN ('Planned', 'Unplanned', 'LoadShedding', 'Maintenance', 'Fault', 'Weather')),
+    StartTime DATETIME2 NOT NULL,
+    EndTime DATETIME2,
+    EstimatedRestoration DATETIME2,
+    Stage INT, -- For load shedding
+    AffectedCustomers INT,
+    Description NVARCHAR(500),
+    Cause NVARCHAR(100),
+    Status NVARCHAR(20) DEFAULT 'Active' CHECK (Status IN ('Active', 'Resolved', 'Cancelled', 'Investigating')),
+    Priority NVARCHAR(10) DEFAULT 'Medium' CHECK (Priority IN ('Low', 'Medium', 'High', 'Critical')),
+    ReportedBy INT,
+    ConfirmedBy INT,
+    ResolvedBy INT,
+    CreatedDate DATETIME2 DEFAULT GETDATE(),
+    ModifiedDate DATETIME2 DEFAULT GETDATE(),
+    
+    FOREIGN KEY (RegionID) REFERENCES Regions(RegionID),
+    FOREIGN KEY (ReportedBy) REFERENCES Users(UserID),
+    FOREIGN KEY (ConfirmedBy) REFERENCES Users(UserID),
+    FOREIGN KEY (ResolvedBy) REFERENCES Users(UserID),
+    CONSTRAINT CHK_StartTime_Before_EndTime_Outage CHECK (StartTime < ISNULL(EndTime, '9999-12-31')),
+    CONSTRAINT CHK_AffectedCustomers_Positive CHECK (AffectedCustomers >= 0)
+);
+
+-- 7. OutageUpdates Table - Track updates for ongoing outages
+CREATE TABLE OutageUpdates (
+    UpdateID INT IDENTITY(1,1) PRIMARY KEY,
+    OutageID INT NOT NULL,
+    UpdateType NVARCHAR(20) CHECK (UpdateType IN ('StatusChange', 'ETAUpdate', 'CauseIdentified', 'ProgressUpdate', 'Resolution')),
+    Title NVARCHAR(200) NOT NULL,
+    Description NVARCHAR(1000) NOT NULL,
+    UpdatedBy INT NOT NULL,
+    CreatedDate DATETIME2 DEFAULT GETDATE(),
+    
+    FOREIGN KEY (OutageID) REFERENCES Outages(OutageID),
+    FOREIGN KEY (UpdatedBy) REFERENCES Users(UserID)
+);
+
+-- 8. BackupSystems Table - Tracks backup power sources
+CREATE TABLE BackupSystems (
+    BackupID INT IDENTITY(1,1) PRIMARY KEY,
+    UserID INT NOT NULL,
+    BackupType NVARCHAR(20) NOT NULL CHECK (BackupType IN ('Solar', 'Battery', 'Generator', 'UPS', 'Hybrid', 'Inverter')),
+    SystemCapacityKWH DECIMAL(8,2) NOT NULL,
+    SystemCapacityKW DECIMAL(8,2) NOT NULL,
+    Manufacturer NVARCHAR(100),
+    Model NVARCHAR(100),
+    SerialNumber NVARCHAR(100),
+    InstallationDate DATE NOT NULL,
+    WarrantyExpiry DATE,
+    IsActive BIT DEFAULT 1,
+    LastMaintenanceDate DATE,
+    NextMaintenanceDate DATE,
+    MaintenanceIntervalDays INT DEFAULT 180,
+    FuelType NVARCHAR(20) CHECK (FuelType IN ('Diesel', 'Petrol', 'Gas', 'None', 'Electric')),
+    BatteryCapacityAH DECIMAL(8,2),
+    SolarPanelCount INT,
+    SolarPanelWattage DECIMAL(6,2),
+    CreatedDate DATETIME2 DEFAULT GETDATE(),
+    ModifiedDate DATETIME2 DEFAULT GETDATE(),
+    
+    FOREIGN KEY (UserID) REFERENCES Users(UserID),
+    CONSTRAINT CHK_SystemCapacity_Positive CHECK (SystemCapacityKWH > 0 AND SystemCapacityKW > 0),
+    CONSTRAINT CHK_InstallationDate_Past CHECK (InstallationDate <= CAST(GETDATE() AS DATE))
+);
+
+-- 9. BackupUsage Table - Tracks backup system usage
+CREATE TABLE BackupUsage (
+    BackupUsageID BIGINT IDENTITY(1,1) PRIMARY KEY,
+    BackupID INT NOT NULL,
+    PowerGeneratedKWH DECIMAL(8,4) NOT NULL,
+    PowerUsedKWH DECIMAL(8,4) NOT NULL,
+    PowerStoredKWH DECIMAL(8,4),
+    BatteryLevelPercent DECIMAL(5,2) CHECK (BatteryLevelPercent BETWEEN 0 AND 100),
+    GeneratorRunningHours DECIMAL(6,2),
+    FuelLevelPercent DECIMAL(5,2),
+    Timestamp DATETIME2 NOT NULL,
+    AmbientTemperature DECIMAL(5,2),
+    SystemEfficiency DECIMAL(5,2),
+    CreatedDate DATETIME2 DEFAULT GETDATE(),
+    
+    FOREIGN KEY (BackupID) REFERENCES BackupSystems(BackupID),
+    CONSTRAINT CHK_PowerGenerated_Positive CHECK (PowerGeneratedKWH >= 0),
+    CONSTRAINT CHK_PowerUsed_Positive CHECK (PowerUsedKWH >= 0)
+);
