@@ -306,3 +306,85 @@ CREATE TABLE MaintenanceLogs (
     CONSTRAINT CHK_Cost_Positive CHECK (Cost >= 0),
     CONSTRAINT CHK_WorkHours_Positive CHECK (WorkHours >= 0)
 );
+
+-- 13. Tariffs Table - Electricity pricing structure
+CREATE TABLE Tariffs (
+    TariffID INT IDENTITY(1,1) PRIMARY KEY,
+    TariffName NVARCHAR(100) NOT NULL,
+    TariffCode NVARCHAR(20) UNIQUE NOT NULL,
+    RegionID INT NOT NULL,
+    CustomerType NVARCHAR(20) DEFAULT 'Residential' CHECK (CustomerType IN ('Residential', 'Business', 'Industrial')),
+    BaseRate DECIMAL(8,4) NOT NULL,
+    PeakRate DECIMAL(8,4),
+    OffPeakRate DECIMAL(8,4),
+    WeekendRate DECIMAL(8,4),
+    PeakHoursStart TIME DEFAULT '18:00',
+    PeakHoursEnd TIME DEFAULT '20:00',
+    EffectiveFrom DATE NOT NULL,
+    EffectiveTo DATE,
+    IsActive BIT DEFAULT 1,
+    CreatedDate DATETIME2 DEFAULT GETDATE(),
+    
+    FOREIGN KEY (RegionID) REFERENCES Regions(RegionID),
+    CONSTRAINT CHK_BaseRate_Positive CHECK (BaseRate > 0),
+    CONSTRAINT CHK_EffectiveDates_Tariff CHECK (EffectiveFrom <= ISNULL(EffectiveTo, '9999-12-31'))
+);
+
+-- 14. Billing Table - Customer billing information
+CREATE TABLE Billing (
+    BillID INT IDENTITY(1,1) PRIMARY KEY,
+    UserID INT NOT NULL,
+    BillingMonth DATE NOT NULL,
+    TotalUsageKWH DECIMAL(10,2) NOT NULL,
+    TotalAmount DECIMAL(10,2) NOT NULL,
+    VATAmount DECIMAL(10,2),
+    DueDate DATE NOT NULL,
+    PaymentStatus NVARCHAR(20) DEFAULT 'Pending' CHECK (PaymentStatus IN ('Pending', 'Paid', 'Overdue', 'Cancelled')),
+    PaidDate DATE,
+    PaymentMethod NVARCHAR(20),
+    InvoiceNumber NVARCHAR(50) UNIQUE,
+    CreatedDate DATETIME2 DEFAULT GETDATE(),
+    ModifiedDate DATETIME2 DEFAULT GETDATE(),
+    
+    FOREIGN KEY (UserID) REFERENCES Users(UserID),
+    CONSTRAINT CHK_TotalUsage_Positive CHECK (TotalUsageKWH >= 0),
+    CONSTRAINT CHK_TotalAmount_Positive CHECK (TotalAmount >= 0),
+    CONSTRAINT CHK_DueDate_After_BillingMonth CHECK (DueDate > BillingMonth)
+);
+
+-- 15. BillingDetails Table - Line items for each bill
+CREATE TABLE BillingDetails (
+    BillDetailID BIGINT IDENTITY(1,1) PRIMARY KEY,
+    BillID INT NOT NULL,
+    Description NVARCHAR(200) NOT NULL,
+    Quantity DECIMAL(10,2) NOT NULL,
+    UnitPrice DECIMAL(8,4) NOT NULL,
+    Amount DECIMAL(10,2) NOT NULL,
+    TaxRate DECIMAL(5,2) DEFAULT 0.15,
+    TaxAmount DECIMAL(10,2),
+    CreatedDate DATETIME2 DEFAULT GETDATE(),
+    
+    FOREIGN KEY (BillID) REFERENCES Billing(BillID),
+    CONSTRAINT CHK_Quantity_Positive CHECK (Quantity >= 0),
+    CONSTRAINT CHK_UnitPrice_Positive CHECK (UnitPrice >= 0)
+);
+
+-- 16. EnergyGoals Table - User-set energy consumption targets
+CREATE TABLE EnergyGoals (
+    GoalID INT IDENTITY(1,1) PRIMARY KEY,
+    UserID INT NOT NULL,
+    GoalType NVARCHAR(20) CHECK (GoalType IN ('Daily', 'Weekly', 'Monthly', 'Yearly')),
+    TargetKWH DECIMAL(8,2) NOT NULL,
+    TargetCost DECIMAL(8,2),
+    StartDate DATE NOT NULL,
+    EndDate DATE NOT NULL,
+    CurrentProgressKWH DECIMAL(8,2) DEFAULT 0,
+    CurrentProgressCost DECIMAL(8,2) DEFAULT 0,
+    IsAchieved BIT DEFAULT 0,
+    CreatedDate DATETIME2 DEFAULT GETDATE(),
+    ModifiedDate DATETIME2 DEFAULT GETDATE(),
+    
+    FOREIGN KEY (UserID) REFERENCES Users(UserID),
+    CONSTRAINT CHK_TargetKWH_Positive CHECK (TargetKWH > 0),
+    CONSTRAINT CHK_EndDate_After_StartDate CHECK (EndDate > StartDate)
+);
