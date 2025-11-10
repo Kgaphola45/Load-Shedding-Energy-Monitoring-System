@@ -388,3 +388,47 @@ CREATE TABLE EnergyGoals (
     CONSTRAINT CHK_TargetKWH_Positive CHECK (TargetKWH > 0),
     CONSTRAINT CHK_EndDate_After_StartDate CHECK (EndDate > StartDate)
 );
+
+-- 17. NotificationsLog Table - Audit trail for all notifications sent
+CREATE TABLE NotificationsLog (
+    NotificationID BIGINT IDENTITY(1,1) PRIMARY KEY,
+    UserID INT NOT NULL,
+    NotificationType NVARCHAR(30) NOT NULL,
+    Channel NVARCHAR(20) NOT NULL,
+    Subject NVARCHAR(200),
+    Message NVARCHAR(1000) NOT NULL,
+    Status NVARCHAR(20) DEFAULT 'Sent' CHECK (Status IN ('Sent', 'Delivered', 'Failed', 'Read')),
+    ErrorMessage NVARCHAR(500),
+    SentDate DATETIME2 DEFAULT GETDATE(),
+    DeliveredDate DATETIME2,
+    
+    FOREIGN KEY (UserID) REFERENCES Users(UserID)
+);
+
+-- 18. SystemSettings Table - Application configuration
+CREATE TABLE SystemSettings (
+    SettingID INT IDENTITY(1,1) PRIMARY KEY,
+    SettingKey NVARCHAR(50) UNIQUE NOT NULL,
+    SettingValue NVARCHAR(500) NOT NULL,
+    SettingType NVARCHAR(20) DEFAULT 'String' CHECK (SettingType IN ('String', 'Number', 'Boolean', 'JSON')),
+    Description NVARCHAR(200),
+    IsActive BIT DEFAULT 1,
+    CreatedDate DATETIME2 DEFAULT GETDATE(),
+    ModifiedDate DATETIME2 DEFAULT GETDATE()
+);
+
+-- 19. AuditLog Table - System audit trail
+CREATE TABLE AuditLog (
+    AuditID BIGINT IDENTITY(1,1) PRIMARY KEY,
+    TableName NVARCHAR(50) NOT NULL,
+    RecordID NVARCHAR(50) NOT NULL,
+    Action NVARCHAR(10) NOT NULL CHECK (Action IN ('INSERT', 'UPDATE', 'DELETE')),
+    OldValues NVARCHAR(MAX),
+    NewValues NVARCHAR(MAX),
+    ChangedBy INT,
+    ChangedDate DATETIME2 DEFAULT GETDATE(),
+    IPAddress NVARCHAR(45),
+    UserAgent NVARCHAR(500),
+    
+    FOREIGN KEY (ChangedBy) REFERENCES Users(UserID)
+);
