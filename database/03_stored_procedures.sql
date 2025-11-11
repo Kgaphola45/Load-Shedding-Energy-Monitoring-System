@@ -249,3 +249,52 @@ BEGIN
 END;
 GO
 
+-- 4. Procedure to Get Load Shedding Schedule for Region
+CREATE OR ALTER PROCEDURE sp_GetLoadSheddingSchedule
+    @RegionID INT = NULL,
+    @RegionCode NVARCHAR(20) = NULL,
+    @Stage INT = NULL,
+    @Date DATE = NULL
+AS
+BEGIN
+    SET NOCOUNT ON;
+    
+    IF @Date IS NULL
+        SET @Date = CAST(GETDATE() AS DATE);
+    
+    SELECT 
+        r.RegionName,
+        r.RegionCode,
+        r.Municipality,
+        r.Province,
+        s.Stage,
+        s.StartTime,
+        s.EndTime,
+        s.DurationMinutes,
+        CASE s.DayOfWeek 
+            WHEN 1 THEN 'Sunday'
+            WHEN 2 THEN 'Monday' 
+            WHEN 3 THEN 'Tuesday'
+            WHEN 4 THEN 'Wednesday'
+            WHEN 5 THEN 'Thursday'
+            WHEN 6 THEN 'Friday'
+            WHEN 7 THEN 'Saturday'
+        END as DayName,
+        s.ScheduleType,
+        s.IsRecurring
+    FROM Schedules s
+    INNER JOIN Regions r ON s.RegionID = r.RegionID
+    WHERE r.IsActive = 1
+    AND s.IsActive = 1
+    AND (
+        (s.IsRecurring = 1 AND s.DayOfWeek = DATEPART(WEEKDAY, @Date))
+        OR (s.IsRecurring = 0 AND s.ScheduleDate = @Date)
+    )
+    AND (s.RegionID = @RegionID OR @RegionID IS NULL)
+    AND (r.RegionCode = @RegionCode OR @RegionCode IS NULL)
+    AND (s.Stage = @Stage OR @Stage IS NULL)
+    AND (s.EffectiveFrom <= @Date AND (s.EffectiveTo IS NULL OR s.EffectiveTo >= @Date))
+    ORDER BY r.RegionName, s.Stage, s.StartTime;
+END;
+GO
+
