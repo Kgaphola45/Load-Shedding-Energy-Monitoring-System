@@ -461,3 +461,119 @@ BEGIN
     END CATCH
 END;
 GO
+
+-- 7. Procedure to Get Active Outages with Details
+CREATE OR ALTER PROCEDURE sp_GetActiveOutages
+    @RegionID INT = NULL
+AS
+BEGIN
+    SET NOCOUNT ON;
+    
+    SELECT 
+        o.OutageID,
+        r.RegionName,
+        r.Municipality,
+        r.Province,
+        o.OutageType,
+        o.StartTime,
+        o.EstimatedRestoration,
+        o.Stage,
+        o.AffectedCustomers,
+        o.Description,
+        o.Cause,
+        o.Status,
+        o.Priority,
+        DATEDIFF(MINUTE, o.StartTime, GETDATE()) as DurationMinutes,
+        (SELECT COUNT(*) FROM OutageUpdates ou WHERE ou.OutageID = o.OutageID) as UpdateCount,
+        ru.FirstName + ' ' + ru.LastName as ReportedBy,
+        cu.FirstName + ' ' + cu.LastName as ConfirmedBy
+    FROM Outages o
+    INNER JOIN Regions r ON o.RegionID = r.RegionID
+    LEFT JOIN Users ru ON o.ReportedBy = ru.UserID
+    LEFT JOIN Users cu ON o.ConfirmedBy = cu.UserID
+    WHERE o.Status IN ('Active', 'Investigating')
+    AND (o.RegionID = @RegionID OR @RegionID IS NULL)
+    ORDER BY o.Priority DESC, o.StartTime DESC;
+END;
+GO
+
+-- 8. Procedure to Update Outage Status
+CREATE OR ALTER PROCEDURE sp_UpdateOutageStatus
+    @OutageID INT,
+    @Status NVARCHAR(20),
+    @EndTime DATETIME2 = NULL,
+    @ResolvedBy INT = NULL,
+    @UpdateDescription NVARCHAR(1000) = NULL
+AS
+BEGIN
+    SET NOCOUNT ON;
+    BEGIN TRY
+        BEGIN TRANSACTION;
+        
+        -- Update outage
+        UPDATE Outages 
+        SET 
+            Status = @Status,
+            EndTime = CASE WHEN @Status = 'Resolved' THEN ISNULL(@EndTime, GETDATE()) ELSE EndTime END,
+            ResolvedBy = CASE WHEN @Status = 'Resolved' THEN @ResolvedBy ELSE ResolvedBy END,
+            ModifiedDate = GETDATE()
+        WHERE OutageID = @OutageID;
+        
+        -- Add outage update if description provided
+        IF @UpdateDescription IS NOT NULL
+        BEGIN
+            INSERT INTO OutageUpdates (OutageID, UpdateType, Title, Description, UpdatedBy)
+            VALUES (
+                @OutageID, 
+                'StatusChange',
+                CONCAT('Outage Status Updated to ', @Status),
+                @UpdateDescription,
+                @ResolvedBy
+            );
+        END
+        
+        -- If outage is resolved, create resolution alerts
+        IF @Status = 'Resolved'
+        BEGIN
+            INSERT INTO Alerts (
+                UserID, AlertType, Title, Message, Priority, RelatedOutageID
+            )
+            SELECT 
+                u.UserID,
+                'OutageResolved',
+                'Power Restored',
+                CONCAT('Power has been restored in your area. Outage duration: ', 
+                       DATEDIFF(MINUTE, o.StartTime, ISNULL(@EndTime, GETDATE())), ' minutes.'),
+                'Medium',
+                @OutageID
+            FROM Outages o
+            INNER JOIN Users u ON o.RegionID = u.RegionID
+            WHERE o.OutageID = @OutageID
+            AND u.IsActive = 1
+            AND EXISTS (
+                SELECT 1 FROM AlertPreferences ap 
+                WHERE ap.UserID = u.UserID 
+                AND ap.AlertType = 'OutageResolved' 
+                AND ap.IsEnabled = 1
+            );
+        END
+        
+        COMMIT TRANSACTION;
+        
+        SELECT 
+            @OutageID AS OutageID,
+            'Outage status updated successfully' AS Message;
+            
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0
+            ROLLBACK TRANSACTION;
+        
+        DECLARE @ErrorMessage NVARCHAR(4000) = ERROR_MESSAGE();
+        DECLARE @ErrorSeverity INT = ERROR_SEVERITY();
+        DECLARE @ErrorState INT = ERROR_STATE();
+        
+        RAISERROR(@ErrorMessage, @ErrorSeverity, @ErrorState);
+    END CATCH
+END;
+GO
