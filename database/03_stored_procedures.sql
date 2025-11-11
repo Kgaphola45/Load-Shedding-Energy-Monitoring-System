@@ -168,3 +168,84 @@ BEGIN
     END CATCH
 END;
 GO
+
+-- 3. Procedure to Report New Outage
+CREATE OR ALTER PROCEDURE sp_ReportOutage
+    @RegionID INT,
+    @OutageType NVARCHAR(20),
+    @StartTime DATETIME2,
+    @EstimatedRestoration DATETIME2 = NULL,
+    @Stage INT = NULL,
+    @Description NVARCHAR(500),
+    @Cause NVARCHAR(100) = NULL,
+    @ReportedBy INT
+AS
+BEGIN
+    SET NOCOUNT ON;
+    BEGIN TRY
+        BEGIN TRANSACTION;
+        
+        DECLARE @AffectedCustomers INT;
+        
+        -- Count affected customers in the region
+        SELECT @AffectedCustomers = COUNT(*)
+        FROM Users 
+        WHERE RegionID = @RegionID AND IsActive = 1;
+        
+        -- Insert outage record
+        INSERT INTO Outages (
+            RegionID, OutageType, StartTime, EstimatedRestoration, Stage,
+            AffectedCustomers, Description, Cause, ReportedBy
+        )
+        VALUES (
+            @RegionID, @OutageType, @StartTime, @EstimatedRestoration, @Stage,
+            @AffectedCustomers, @Description, @Cause, @ReportedBy
+        );
+        
+        DECLARE @NewOutageID INT = SCOPE_IDENTITY();
+        
+        -- Create alerts for all users in the affected region
+        INSERT INTO Alerts (
+            UserID, AlertType, Title, Message, Priority, RelatedOutageID
+        )
+        SELECT 
+            u.UserID,
+            'OutageReported',
+            CONCAT('Power Outage Reported - ', r.RegionName),
+            CONCAT('Power outage reported in your area. ', 
+                   CASE WHEN @EstimatedRestoration IS NOT NULL 
+                        THEN CONCAT('Estimated restoration: ', FORMAT(@EstimatedRestoration, 'hh:mm tt'))
+                        ELSE 'Restoration time to be confirmed.' END),
+            'High',
+            @NewOutageID
+        FROM Users u
+        INNER JOIN Regions r ON u.RegionID = r.RegionID
+        WHERE u.RegionID = @RegionID 
+        AND u.IsActive = 1
+        AND EXISTS (
+            SELECT 1 FROM AlertPreferences ap 
+            WHERE ap.UserID = u.UserID 
+            AND ap.AlertType = 'OutageReported' 
+            AND ap.IsEnabled = 1
+        );
+        
+        COMMIT TRANSACTION;
+        
+        SELECT 
+            @NewOutageID AS OutageID,
+            'Outage reported successfully' AS Message;
+            
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0
+            ROLLBACK TRANSACTION;
+        
+        DECLARE @ErrorMessage NVARCHAR(4000) = ERROR_MESSAGE();
+        DECLARE @ErrorSeverity INT = ERROR_SEVERITY();
+        DECLARE @ErrorState INT = ERROR_STATE();
+        
+        RAISERROR(@ErrorMessage, @ErrorSeverity, @ErrorState);
+    END CATCH
+END;
+GO
+
