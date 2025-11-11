@@ -298,3 +298,166 @@ BEGIN
 END;
 GO
 
+
+-- 5. Procedure to Calculate User Energy Consumption Summary
+CREATE OR ALTER PROCEDURE sp_GetUserEnergySummary
+    @UserID INT,
+    @StartDate DATE = NULL,
+    @EndDate DATE = NULL
+AS
+BEGIN
+    SET NOCOUNT ON;
+    
+    IF @StartDate IS NULL
+        SET @StartDate = DATEADD(MONTH, -1, CAST(GETDATE() AS DATE));
+    
+    IF @EndDate IS NULL
+        SET @EndDate = CAST(GETDATE() AS DATE);
+    
+    SELECT 
+        u.UserID,
+        u.FirstName + ' ' + u.LastName as UserName,
+        r.RegionName,
+        COUNT(pu.UsageID) as TotalReadings,
+        SUM(pu.UsageKWH) as TotalConsumptionKWH,
+        AVG(pu.UsageKWH) as AverageDailyConsumption,
+        SUM(pu.TotalCost) as TotalCost,
+        MAX(pu.UsageKWH) as PeakConsumption,
+        MIN(pu.UsageKWH) as MinimumConsumption,
+        SUM(CASE WHEN pu.IsPeakHours = 1 THEN pu.UsageKWH ELSE 0 END) as PeakHoursConsumption,
+        SUM(CASE WHEN pu.IsLoadShedding = 1 THEN pu.UsageKWH ELSE 0 END) as LoadSheddingConsumption,
+        (SELECT COUNT(*) FROM Outages o 
+         WHERE o.RegionID = u.RegionID 
+         AND o.StartTime BETWEEN @StartDate AND DATEADD(DAY, 1, @EndDate)
+         AND o.OutageType = 'LoadShedding') as LoadSheddingEvents
+    FROM Users u
+    INNER JOIN Regions r ON u.RegionID = r.RegionID
+    LEFT JOIN PowerUsage pu ON u.UserID = pu.UserID 
+        AND pu.Timestamp BETWEEN @StartDate AND DATEADD(DAY, 1, @EndDate)
+    WHERE u.UserID = @UserID
+    GROUP BY u.UserID, u.FirstName, u.LastName, r.RegionName, u.RegionID;
+END;
+GO
+
+-- 6. Procedure to Generate Monthly Bill
+CREATE OR ALTER PROCEDURE sp_GenerateMonthlyBill
+    @UserID INT,
+    @BillingMonth DATE
+AS
+BEGIN
+    SET NOCOUNT ON;
+    BEGIN TRY
+        BEGIN TRANSACTION;
+        
+        DECLARE @TotalUsageKWH DECIMAL(10,2);
+        DECLARE @TotalAmount DECIMAL(10,2);
+        DECLARE @VATRate DECIMAL(5,2);
+        DECLARE @VATAmount DECIMAL(10,2);
+        DECLARE @DueDate DATE;
+        DECLARE @TariffID INT;
+        DECLARE @BaseRate DECIMAL(8,4);
+        DECLARE @InvoiceNumber NVARCHAR(50);
+        
+        -- Get VAT rate from system settings
+        SELECT @VATRate = CAST(SettingValue AS DECIMAL(5,2))
+        FROM SystemSettings 
+        WHERE SettingKey = 'VATRate' AND IsActive = 1;
+        
+        IF @VATRate IS NULL
+            SET @VATRate = 0.15; -- Default VAT rate
+        
+        -- Calculate total usage for the month
+        SELECT @TotalUsageKWH = SUM(UsageKWH)
+        FROM PowerUsage
+        WHERE UserID = @UserID
+        AND Timestamp >= @BillingMonth
+        AND Timestamp < DATEADD(MONTH, 1, @BillingMonth);
+        
+        IF @TotalUsageKWH IS NULL
+            SET @TotalUsageKWH = 0;
+        
+        -- Get applicable tariff
+        SELECT TOP 1 
+            @TariffID = TariffID,
+            @BaseRate = BaseRate
+        FROM Tariffs t
+        INNER JOIN Users u ON t.RegionID = u.RegionID
+        WHERE u.UserID = @UserID
+        AND t.CustomerType = CASE 
+            WHEN u.UserType IN ('Household') THEN 'Residential'
+            WHEN u.UserType IN ('Business') THEN 'Business'
+            ELSE 'Industrial'
+        END
+        AND t.EffectiveFrom <= @BillingMonth
+        AND (t.EffectiveTo IS NULL OR t.EffectiveTo >= @BillingMonth)
+        AND t.IsActive = 1
+        ORDER BY t.EffectiveFrom DESC;
+        
+        IF @BaseRate IS NULL
+            SET @BaseRate = 2.50; -- Default rate
+        
+        -- Calculate amounts
+        SET @TotalAmount = @TotalUsageKWH * @BaseRate;
+        SET @VATAmount = @TotalAmount * @VATRate;
+        SET @DueDate = DATEADD(DAY, 25, @BillingMonth); -- Due date 25th of next month
+        SET @InvoiceNumber = 'INV-' + FORMAT(@BillingMonth, 'yyyyMM') + '-' + RIGHT('000' + CAST(@UserID AS NVARCHAR(10)), 3);
+        
+        -- Insert bill
+        INSERT INTO Billing (
+            UserID, BillingMonth, TotalUsageKWH, TotalAmount, VATAmount, DueDate, InvoiceNumber
+        )
+        VALUES (
+            @UserID, @BillingMonth, @TotalUsageKWH, @TotalAmount, @VATAmount, @DueDate, @InvoiceNumber
+        );
+        
+        DECLARE @NewBillID INT = SCOPE_IDENTITY();
+        
+        -- Insert billing details
+        INSERT INTO BillingDetails (BillID, Description, Quantity, UnitPrice, Amount, TaxRate, TaxAmount)
+        VALUES 
+            (@NewBillID, 'Energy Consumption', @TotalUsageKWH, @BaseRate, @TotalAmount, @VATRate, @VATAmount),
+            (@NewBillID, 'Service Fee', 1, 15.00, 15.00, @VATRate, 2.25),
+            (@NewBillID, 'Network Charges', 1, 35.00, 35.00, @VATRate, 5.25);
+        
+        -- Update total amount with additional charges
+        UPDATE Billing 
+        SET TotalAmount = TotalAmount + 50.00, -- Service fee + network charges
+            VATAmount = VATAmount + 7.50
+        WHERE BillID = @NewBillID;
+        
+        -- Create alert for the user
+        INSERT INTO Alerts (
+            UserID, AlertType, Title, Message, Priority
+        )
+        VALUES (
+            @UserID, 'PaymentDue',
+            'New Electricity Bill Generated',
+            CONCAT('Your electricity bill for ', FORMAT(@BillingMonth, 'MMMM yyyy'), 
+                   ' is ready. Amount due: R', FORMAT(@TotalAmount + 50.00, 'N2'), 
+                   '. Due date: ', FORMAT(@DueDate, 'dd MMM yyyy')),
+            'Medium'
+        );
+        
+        COMMIT TRANSACTION;
+        
+        SELECT 
+            @NewBillID AS BillID,
+            @InvoiceNumber AS InvoiceNumber,
+            @TotalUsageKWH AS TotalUsageKWH,
+            (@TotalAmount + 50.00) AS TotalAmount,
+            @DueDate AS DueDate,
+            'Bill generated successfully' AS Message;
+            
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0
+            ROLLBACK TRANSACTION;
+        
+        DECLARE @ErrorMessage NVARCHAR(4000) = ERROR_MESSAGE();
+        DECLARE @ErrorSeverity INT = ERROR_SEVERITY();
+        DECLARE @ErrorState INT = ERROR_STATE();
+        
+        RAISERROR(@ErrorMessage, @ErrorSeverity, @ErrorState);
+    END CATCH
+END;
+GO
