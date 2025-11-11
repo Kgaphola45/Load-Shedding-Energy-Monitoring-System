@@ -577,3 +577,103 @@ BEGIN
     END CATCH
 END;
 GO
+
+-- 9. Procedure to Get User Alerts
+CREATE OR ALTER PROCEDURE sp_GetUserAlerts
+    @UserID INT,
+    @IsRead BIT = NULL,
+    @AlertType NVARCHAR(30) = NULL,
+    @DaysBack INT = 30
+AS
+BEGIN
+    SET NOCOUNT ON;
+    
+    SELECT 
+        a.AlertID,
+        a.AlertType,
+        a.Title,
+        a.Message,
+        a.IsRead,
+        a.Priority,
+        a.SentDate,
+        a.ReadDate,
+        a.ExpiryDate,
+        o.OutageType,
+        r.RegionName,
+        s.Stage as LoadSheddingStage
+    FROM Alerts a
+    LEFT JOIN Outages o ON a.RelatedOutageID = o.OutageID
+    LEFT JOIN Regions r ON o.RegionID = r.RegionID
+    LEFT JOIN Schedules s ON a.RelatedScheduleID = s.ScheduleID
+    WHERE a.UserID = @UserID
+    AND a.SentDate >= DATEADD(DAY, -@DaysBack, GETDATE())
+    AND (a.IsRead = @IsRead OR @IsRead IS NULL)
+    AND (a.AlertType = @AlertType OR @AlertType IS NULL)
+    ORDER BY a.SentDate DESC;
+END;
+GO
+
+-- 10. Procedure to Mark Alert as Read
+CREATE OR ALTER PROCEDURE sp_MarkAlertAsRead
+    @AlertID BIGINT,
+    @UserID INT = NULL
+AS
+BEGIN
+    SET NOCOUNT ON;
+    
+    UPDATE Alerts 
+    SET IsRead = 1, 
+        ReadDate = GETDATE()
+    WHERE AlertID = @AlertID
+    AND (UserID = @UserID OR @UserID IS NULL);
+    
+    SELECT 
+        @AlertID AS AlertID,
+        'Alert marked as read' AS Message;
+END;
+GO
+
+-- 11. Procedure to Get Regional Energy Statistics
+CREATE OR ALTER PROCEDURE sp_GetRegionalEnergyStats
+    @RegionID INT = NULL,
+    @StartDate DATE = NULL,
+    @EndDate DATE = NULL
+AS
+BEGIN
+    SET NOCOUNT ON;
+    
+    IF @StartDate IS NULL
+        SET @StartDate = DATEADD(MONTH, -1, CAST(GETDATE() AS DATE));
+    
+    IF @EndDate IS NULL
+        SET @EndDate = CAST(GETDATE() AS DATE);
+    
+    SELECT 
+        r.RegionID,
+        r.RegionName,
+        r.Municipality,
+        r.Province,
+        COUNT(DISTINCT u.UserID) as TotalCustomers,
+        COUNT(pu.UsageID) as TotalReadings,
+        SUM(pu.UsageKWH) as TotalConsumptionKWH,
+        AVG(pu.UsageKWH) as AverageConsumptionPerReading,
+        SUM(pu.TotalCost) as TotalCost,
+        SUM(CASE WHEN pu.IsPeakHours = 1 THEN pu.UsageKWH ELSE 0 END) as PeakHoursConsumption,
+        SUM(CASE WHEN pu.IsLoadShedding = 1 THEN pu.UsageKWH ELSE 0 END) as LoadSheddingConsumption,
+        (SELECT COUNT(*) FROM Outages o 
+         WHERE o.RegionID = r.RegionID 
+         AND o.StartTime BETWEEN @StartDate AND DATEADD(DAY, 1, @EndDate)) as TotalOutages,
+        (SELECT COUNT(*) FROM Outages o 
+         WHERE o.RegionID = r.RegionID 
+         AND o.OutageType = 'LoadShedding'
+         AND o.StartTime BETWEEN @StartDate AND DATEADD(DAY, 1, @EndDate)) as LoadSheddingEvents
+    FROM Regions r
+    LEFT JOIN Users u ON r.RegionID = u.RegionID AND u.IsActive = 1
+    LEFT JOIN PowerUsage pu ON u.UserID = pu.UserID 
+        AND pu.Timestamp BETWEEN @StartDate AND DATEADD(DAY, 1, @EndDate)
+    WHERE (r.RegionID = @RegionID OR @RegionID IS NULL)
+    AND r.IsActive = 1
+    GROUP BY r.RegionID, r.RegionName, r.Municipality, r.Province
+    ORDER BY TotalConsumptionKWH DESC;
+END;
+GO
